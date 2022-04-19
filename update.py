@@ -87,7 +87,7 @@ def downJoin(istat):
             },
             "geometry": geometry
         }
-        print(codice)
+        # print(codice)
         output.append(converted)
 
 
@@ -107,7 +107,7 @@ def insert(featureCollection):
     missing = []
     cur.execute('BEGIN TRANSACTION;')
     for record in featureCollection['features']:
-        time.sleep(5)
+        time.sleep(1)
         area = record['properties']['CODICE']
         data = req.get(portaleURL+'datiArea.do?codiceArea=' +
                        str(area)+'&tipoArea=undefined&isFuoriNorma=undefined')
