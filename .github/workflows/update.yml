@@ -17,7 +17,6 @@ jobs:
         run: |-
           pip install pandas requests
           sudo apt-get install sqlite3
-          which sqldiff
       
       - name: Update Areas
         id: update_areas
