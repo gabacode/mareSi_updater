@@ -19,7 +19,7 @@ jobs:
       - name: Update Areas
         id: update_areas
         run: |
-          output=$(python ./scripts/update.py.py)
+          output=$(python ./update.py)
           echo "::set-output name=result::$output"
           echo $(date '+%Y-%m-%d %H:%M:%S') - $output
         
