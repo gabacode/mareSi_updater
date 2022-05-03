@@ -28,10 +28,11 @@ def diff():
     print('New update:', needsUpdate)
 
     if needsUpdate:
-        print('UPDATE')
-        data.append({'date': lastDB, 'diff': diffList})
-        with open('./data/updates.json', "w") as file:
-            json.dump(data, file)
+        if len(diffList) > 0:
+            print('UPDATE')
+            data.append({'date': lastDB, 'diff': diffList})
+            with open('./data/updates.json', "w") as file:
+                json.dump(data, file)
 
 
 diff()

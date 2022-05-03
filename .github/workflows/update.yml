@@ -22,6 +22,11 @@ jobs:
         id: update_areas
         run: |-
           python3 ./update.py
+
+      - name: Calculate Diffs
+        id: calculate_diffs
+        run: |-
+          python3 ./diff.py
         
       - name: Update Repository
         run: |-
