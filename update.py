@@ -170,10 +170,11 @@ def insert(featureCollection):
     cur.execute(
         "INSERT OR REPLACE INTO version (ROWID, lastUpdate) VALUES (1, ?)", [timestamp])
     cur.execute('COMMIT;')
-    with open('./data/'+timestamp+'.json', 'w+') as f:
+    with open('./data/json/'+timestamp+'.json', 'w+') as f:
         json.dump(areas, f)
     os.rename('./data/latest.db', './data/'+timestamp+'.db')
     print('missing: ', missing)
+    print('Done!')
 
 
 def execute():
