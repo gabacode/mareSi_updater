@@ -149,10 +149,10 @@ def insert(featureCollection):
                 "statoDesc": data['areaBalneazioneBean']['statoDesc'],
                 "isFuoriNorma": data['areaBalneazioneBean']['isFuoriNorma'],
                 "geometry": str(record['geometry']['coordinates']),
-                "ultimaAnalisi": str(data['analisi'][0]['dataAnalisi']) if len(data['analisi']) > 0 else None,
-                "valoreEi": str(data['analisi'][0]['valoreEnterococchi']) if len(data['analisi']) > 0 else None,
-                "valoreEc": str(data['analisi'][0]['valoreEscherichiaColi']) if len(data['analisi']) > 0 else None,
-                "flagOltreLimiti": str(data['analisi'][0]['flagOltreLimiti']) if len(data['analisi']) > 0 else None,
+                "ultimaAnalisi": str(data['analisi'][0]['dataAnalisi']) if len(data['analisi']) > 0 else str(data['analisiStorico'][0]['dataAnalisi']) if len(data['analisiStorico']) > 0 else None,
+                "valoreEi": str(data['analisi'][0]['valoreEnterococchi']) if len(data['analisi']) > 0 else str(data['analisiStorico'][0]['valoreEnterococchi']) if len(data['analisiStorico']) > 0 else None,
+                "valoreEc": str(data['analisi'][0]['valoreEscherichiaColi']) if len(data['analisi']) > 0 else str(data['analisiStorico'][0]['valoreEscherichiaColi']) if len(data['analisiStorico']) > 0 else None,
+                "flagOltreLimiti": str(data['analisi'][0]['flagOltreLimiti']) if len(data['analisi']) > 0 else str(data['analisiStorico'][0]['flagOltreLimiti']) if len(data['analisiStorico']) > 0 else None,
                 "scheda": data['dettaglioProfiliBean'][0]['codice'] if data['dettaglioProfiliBean'] != None else None,
                 "interdizioni": str(data['interdizioni']) if data['interdizioni'] != None else None
             }
