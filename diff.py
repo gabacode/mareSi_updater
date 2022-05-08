@@ -34,7 +34,7 @@ def diff():
     print("New update:", needs_update)
 
     if needs_update:
-        if len(diff_list) > 0:
+        if len(diff_list) > 1:
             print("UPDATE")
             data.append({"date": last_db, "diff": diff_list})
             with open("./data/updates.json", "w", encoding="utf-8") as file:
