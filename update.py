@@ -7,7 +7,9 @@ from datetime import datetime
 import time
 import pandas as pd
 import requests
+import urllib3
 
+urllib3.disable_warnings()
 
 PORTALE_URL = "https://www.portaleacque.salute.gov.it/PortaleAcquePubblico"
 COMUNI = "https://raw.githubusercontent.com/opendatasicilia/comuni-italiani/main/dati/comuni.csv"
