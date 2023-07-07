@@ -250,6 +250,10 @@ def execute():
     print("Inserting features into db...")
     insert(feature_collection)
 
-
-execute()
-connection.close()
+if __name__ == "__main__":
+    try:
+        execute()
+    except Exception as error:
+        print(error)
+    finally:
+        connection.close()

@@ -21,7 +21,7 @@ jobs:
       - name: Update Areas
         id: update_areas
         run: |-
-          python3 ./update.py
+          OPENSSL_CONF=openssl.cnf python3 ./update.py
 
       - name: Calculate Diffs
         id: calculate_diffs
