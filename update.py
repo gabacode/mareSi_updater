@@ -1,261 +1,136 @@
-"""Update Areas"""
-
 import json
-import sqlite3
+import logging
 import os
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
-import time
-import pandas as pd
+
 import requests
 import urllib3
+from rich import print
+from tqdm import tqdm
+
+from config import HEADERS, PORTALE_URL, CODICI_ISTAT, MAX_WORKERS
+from utils import Utilities, DatabaseManager
 
 urllib3.disable_warnings()
-
-PORTALE_URL = "https://www.portaleacque.salute.gov.it/PortaleAcquePubblico"
-COMUNI = "https://raw.githubusercontent.com/opendatasicilia/comuni-italiani/main/dati/comuni.csv"
-connection = sqlite3.connect("./data/latest.db")
-cursor = connection.cursor()
-request = requests.Session()
-
-headers = {
-    "Connection": "keep-alive",
-    "sec-ch-ua": '"Not A;Brand";v="99", "Chromium";v="99", "Google Chrome";v="99"',
-    "Accept": "application/json",
-    "Content-Type": "application/json",
-    "sec-ch-ua-mobile": "?0",
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/99.0.4844.74 Safari/537.36",
-    "sec-ch-ua-platform": '"Windows"',
-    "Origin": "https://www.portaleacque.salute.gov.it/",
-    "Sec-Fetch-Site": "same-origin",
-    "Sec-Fetch-Mode": "cors",
-    "Sec-Fetch-Dest": "empty",
-    "Referer": "https://www.portaleacque.salute.gov.it/PortaleAcquePubblico/",
-    "Accept-Language": "en-US,en;q=0.9,it;q=0.8",
-    "Cookie": "cookies_consent=true",
-}
-
-request.headers.update(headers)
-
-cursor.execute(
-    """
-create table if not exists areas (
-    CODICE integer primary key not null,
-    nome varchar(50) not null,
-    comune varchar(50) not null,
-    provincia varchar(25) not null,
-    siglaProvincia varchar(2) not null,
-    regione integer not null,
-    stato integer not null,
-    limiteEi integer not null,
-    limiteEc integer not null,
-    dataInizioStagioneBalneare varchar(10) not null,
-    dataFineStagioneBalneare varchar(10) not null,
-    statoDesc varchar(50) not null,
-    geometry text not null,
-    isFuoriNorma varchar(1),
-    ultimaAnalisi varchar(10),
-    valoreEi integer,
-    valoreEc integer,
-    flagOltreLimiti integer,
-    scheda integer,
-    interdizioni text
-    );
-"""
-)
-cursor.execute(
-    """
-create table if not exists version (
-    lastUpdate TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL
-    );
-"""
-)
-
-codici_istat = {
-    "Piemonte": "001272",
-    "Liguria": "010025",
-    "Lombardia": "015146",
-    "Veneto": "027042",
-    "Friuli Venezia Giulia": "032006",
-    "Emilia Romagna": "037006",
-    "Toscana": "048017",
-    "Marche": "042002",
-    "Umbria": "054039",
-    "Lazio": "058091",
-    "Abruzzo": "066049",
-    "Molise": "070006",
-    "Campania": "063049",
-    "Puglia": "072006",
-    "Basilicata": "076063",
-    "Calabria": "079023",
-    "Sicilia": "082053",
-    "Sardegna": "092009",
-}
-
-comuni = pd.read_csv(COMUNI)
-output = []
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 
-def down_join(codice_istat):
-    """Gets features for codice ISTAT"""
-    global output
-    try:
-        data = request.get(f"{PORTALE_URL}/rest/layer/AB/{codice_istat}", verify=False)
-    except ConnectionError as error:
-        print(error)
-    if data.status_code != 200:
-        print(data.status_code)
-        return
-    data = data.json()
-    for i in range(len(data["features"])):
-        codice = data["features"][i]["properties"]["CODICE"]
-        geometry = data["features"][i]["geometry"]
-        converted = {
-            "type": "Feature",
-            "properties": {"CODICE": codice},
-            "geometry": geometry,
-        }
-        output.append(converted)
+class Update:
+    def __init__(self, database):
+        self.db_manager = DatabaseManager(database)
+        self.session = self.get_session()
+        self.utils = Utilities()
 
+    @staticmethod
+    def get_session():
+        session = requests.Session()
+        session.headers.update(HEADERS)
+        return session
 
-def get_regione(provincia):
-    """Get region code from provincia"""
-    # print(provincia)
-    if (
-        (provincia == "CI")
-        or (provincia == "OT")
-        or (provincia == "VS")
-        or (provincia == "OG")
-    ):
-        return 20
-    elif provincia == "NA":
-        return 15
-    codice = comuni.loc[comuni.sigla == provincia, "cod_reg"].values[0]
-    return int(codice)
+    def get_features(self, codice_istat):
+        """Download data for a given ISTAT code."""
+        try:
+            response = self.session.get(f"{PORTALE_URL}/rest/layer/AB/{codice_istat}", verify=False)
+            response.raise_for_status()
+            data = response.json()
+            if "features" in data:
+                return data["features"]
+            else:
+                tqdm.write(f"No features found for {codice_istat}")
+                return []
+        except requests.RequestException as e:
+            print(f"{codice_istat}: {e}")
+            return []
 
+    def process_area(self, feature):
+        """Process and insert area data into the database."""
+        codice_area = feature["properties"]["CODICE"]
+        response = self.session.get(f"{PORTALE_URL}/datiArea.do?codiceArea={str(codice_area)}&tipoArea=undefined&isFuoriNorma=undefined",
+                                    verify=False, timeout=(20, 60))
+        if response.status_code == 200:
+            data = response.json()
+            area = data.get("areaBalneazioneBean")
+            if area is None:
+                return None
+            coordinates = feature["geometry"]["coordinates"]
+            return self.utils.convert_area(area, coordinates, data)
+        return None
 
-def insert(feature_collection):
-    """Insert data into DB"""
-    # https://www.portaleacque.salute.gov.it/PortaleAcquePubblico/datiArea.do?codiceArea={codice}&tipoArea=undefined&isFuoriNorma=undefined
-    timeout = 0
-    areas = []
-    missing = []
-    cursor.execute("BEGIN TRANSACTION;")
-    for index, record in enumerate(feature_collection["features"]):
-        time.sleep(timeout)
-        area = record["properties"]["CODICE"]
-        data = request.get(
-            f"{PORTALE_URL}/datiArea.do?codiceArea={str(area)}&tipoArea=undefined&isFuoriNorma=undefined",
-            verify=False,
-        )
-        if data.status_code == 200:
-            data = data.json()
-            converted = {
-                "CODICE": data["areaBalneazioneBean"]["codice"],
-                "nome": data["areaBalneazioneBean"]["nome"],
-                "comune": data["areaBalneazioneBean"]["comune"],
-                "provincia": data["areaBalneazioneBean"]["provincia"],
-                "siglaProvincia": data["areaBalneazioneBean"]["siglaProvincia"],
-                "regione": get_regione(data["areaBalneazioneBean"]["siglaProvincia"]),
-                "stato": data["areaBalneazioneBean"]["stato"],
-                "limiteEi": data["areaBalneazioneBean"]["limiteEi"],
-                "limiteEc": data["areaBalneazioneBean"]["limiteEc"],
-                "dataInizioStagioneBalneare": data["areaBalneazioneBean"][
-                    "dataInizioStagioneBalneare"
-                ]
-                if "dataInizioStagioneBalneare" in data["areaBalneazioneBean"]
-                else "",
-                "dataFineStagioneBalneare": data["areaBalneazioneBean"][
-                    "dataFineStagioneBalneare"
-                ]
-                if "dataFineStagioneBalneare" in data["areaBalneazioneBean"]
-                else "",
-                "statoDesc": data["areaBalneazioneBean"]["statoDesc"],
-                "isFuoriNorma": data["areaBalneazioneBean"]["isFuoriNorma"],
-                "geometry": str(record["geometry"]["coordinates"]),
-                "ultimaAnalisi": str(data["analisi"][0]["dataAnalisi"])
-                if len(data["analisi"]) > 0
-                else str(data["analisiStorico"][0]["dataAnalisi"])
-                if len(data["analisiStorico"]) > 0
-                else None,
-                "valoreEi": str(data["analisi"][0]["valoreEnterococchi"])
-                if len(data["analisi"]) > 0
-                else str(data["analisiStorico"][0]["valoreEnterococchi"])
-                if len(data["analisiStorico"]) > 0
-                else None,
-                "valoreEc": str(data["analisi"][0]["valoreEscherichiaColi"])
-                if len(data["analisi"]) > 0
-                else str(data["analisiStorico"][0]["valoreEscherichiaColi"])
-                if len(data["analisiStorico"]) > 0
-                else None,
-                "flagOltreLimiti": str(data["analisi"][0]["flagOltreLimiti"])
-                if len(data["analisi"]) > 0
-                else str(data["analisiStorico"][0]["flagOltreLimiti"])
-                if len(data["analisiStorico"]) > 0
-                else None,
-                "scheda": data["dettaglioProfiliBean"][0]["codice"]
-                if data["dettaglioProfiliBean"] is not None
-                else None,
-                "interdizioni": str(data["interdizioni"])
-                if data["interdizioni"] is not None
-                else None,
-            }
-            try:
-                cursor.execute(
-                    "INSERT OR REPLACE INTO areas VALUES (:CODICE, :nome, :comune, :provincia, :siglaProvincia, :regione, :stato, :limiteEi, :limiteEc, :dataInizioStagioneBalneare, :dataFineStagioneBalneare, :statoDesc, :geometry, :isFuoriNorma, :ultimaAnalisi, :valoreEi, :valoreEc, :flagOltreLimiti, :scheda, :interdizioni);",
-                    converted,
-                )
-                print(
-                    f"[{str(index)}/{str(len(feature_collection['features']))}]",
-                    converted["CODICE"],
-                    converted["nome"],
-                    converted["comune"],
-                    converted["provincia"],
-                    converted["regione"],
-                )
-                areas.append(converted)
-            except InterruptedError as error:
-                print(error)
+    @staticmethod
+    def save(areas, timestamp):
+        """Save areas to a JSON file."""
+        with open(f"./data/json/{timestamp}.json", "w+", encoding="utf-8") as file:
+            json.dump(areas, file)
+
+    def insert_features(self, features):
+        """Insert features into the database."""
+        areas, errors = [], []
+        self.db_manager.begin_transaction()
+        pbar = tqdm(total=len(features), desc=f"Processing {len(features)} Areas", unit="area")
+        with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
+            future_to_feature = {executor.submit(self.process_area, feature): feature for feature in features}
+            for future in as_completed(future_to_feature):
+                feature = future_to_feature[future]
+                try:
+                    area = future.result()
+                    if area:
+                        areas.append(area)
+                        self.db_manager.insert_area(area)
+                except Exception as exc:
+                    errors.append(feature)
+                    tqdm.write(f"Feature generated an exception: {feature}, {exc}")
+                finally:
+                    pbar.update(1)
+        timestamp = datetime.now().strftime("%Y-%m-%dT%H:%M:%S")
+        self.db_manager.update_version(timestamp)
+        self.db_manager.commit()
+        self.save(areas, timestamp)
+        os.rename("./data/latest.db", f"./data/db/{timestamp}.db")
+        if len(errors) > 0:
+            tqdm.write(f"Errors occurred for {len(errors)} areas")
+
+    def download_features(self):
+        """Download features for all regions."""
+        all_features = []
+        with tqdm(CODICI_ISTAT.values(), desc=f"Downloading {len(CODICI_ISTAT.values())} Regions", unit="Regione") as pbar:
+            with ThreadPoolExecutor(max_workers=10) as executor:
+                future_to_istat = {executor.submit(self.get_features, istat): istat for istat in CODICI_ISTAT.values()}
+                for future in as_completed(future_to_istat):
+                    codice_istat = future_to_istat[future]
+                    try:
+                        features = future.result()
+                        all_features.extend(features)
+                    except Exception as e:
+                        tqdm.write(f"Error downloading features for {codice_istat}: {e}")
+                    finally:
+                        pbar.update(1)
+        return all_features
+
+    def run(self):
+        tmp_file = "./data/output.json"
+        out_file = "./data/minified.json"
+        if os.path.exists(out_file):
+            minified = open(out_file, encoding="utf-8")
+            features = json.loads(minified.read())
+            feature_collection = features["features"]
         else:
-            missing.append(area)
-            continue
-    timestamp = datetime.now().strftime("%Y-%m-%dT%H:%M:%S")
-    cursor.execute(
-        "INSERT OR REPLACE INTO version (ROWID, lastUpdate) VALUES (1, ?)", [timestamp]
-    )
-    cursor.execute("COMMIT;")
-    with open(f"./data/json/{timestamp}.json", "w+", encoding="utf-8") as file:
-        json.dump(areas, file)
-    os.rename("./data/latest.db", f"./data/{timestamp}.db")
-    print("missing: ", missing)
-    print("Done!")
+            features = self.download_features()
+            feature_collection = list({feature["properties"]["CODICE"]: feature for feature in features}.values())
+            output = {"type": "FeatureCollection", "features": feature_collection}
+            with open(tmp_file, "w+", encoding="utf-8") as file:
+                json.dump(output, file)
+            os.system(f"mapshaper -i {tmp_file} -snap -simplify weighted 12% keep-shapes -o {out_file}")
+            os.remove(tmp_file)
 
+        self.insert_features(feature_collection)
+        self.db_manager.close()
 
-def execute():
-    """The Main Function"""
-    if not os.path.exists("./data/minified.json"):
-        global output
-        for codice_istat in codici_istat.values():
-            down_join(codice_istat)
-        print("Looking for duplicates...")
-        nodups = {i["properties"]["CODICE"]: i for i in reversed(output)}.values()
-        features = list(nodups)
-        output = {"type": "FeatureCollection", "features": features}
-        print("Saving file...")
-        with open("./data/output.json", "w+", encoding="utf-8") as file:
-            json.dump(output, file)
-        os.system(
-            "mapshaper -i ./data/output.json -snap -simplify weighted 12% keep-shapes -o ./data/minified.json"
-        )
-        os.remove("./data/output.json")
-    minified = open("./data/minified.json", encoding="utf-8")
-    feature_collection = json.loads(minified.read())
-    print("Inserting features into db...")
-    insert(feature_collection)
 
 if __name__ == "__main__":
     try:
-        execute()
+        Update("./data/latest.db").run()
     except Exception as error:
-        print(error)
+        logging.exception(f"An error occurred: {error}")
     finally:
-        connection.close()
+        logging.info("Done!")
