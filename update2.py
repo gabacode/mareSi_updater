@@ -108,12 +108,20 @@ class Update:
         return all_features
 
     def run(self):
-        if os.path.exists("./data/minified.json"):
-            minified = open("./data/minified.json", encoding="utf-8")
+        tmp_file = "./data/output.json"
+        out_file = "./data/minified.json"
+        if os.path.exists(out_file):
+            minified = open(out_file, encoding="utf-8")
             features = json.loads(minified.read())
             feature_collection = features["features"]
         else:
-            feature_collection = self.download_features()
+            features = self.download_features()
+            feature_collection = list({feature["properties"]["CODICE"]: feature for feature in features}.values())
+            output = {"type": "FeatureCollection", "features": feature_collection}
+            with open(tmp_file, "w+", encoding="utf-8") as file:
+                json.dump(output, file)
+            os.system(f"mapshaper -i {tmp_file} -snap -simplify weighted 12% keep-shapes -o {out_file}")
+            os.remove(tmp_file)
 
         self.insert_features(feature_collection)
         self.db_manager.close()
