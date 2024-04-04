@@ -11,7 +11,7 @@ venv_check:
 .PHONY: update
 update: venv_check
 	@echo "Running update.py..."
-	@bash -c "source venv/bin/activate && OPENSSL_CONF=config/openssl.cnf python3 ./update2.py"
+	@bash -c "source venv/bin/activate && OPENSSL_CONF=config/openssl.cnf python3 ./update.py"
 
 .PHONY: diff
 diff: venv_check
