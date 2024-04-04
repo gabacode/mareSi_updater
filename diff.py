@@ -1,11 +1,10 @@
-"""Calculates diffs between two databases and saves them to a file."""
 import os
 import json
 import subprocess
 
 
-def diff():
-    """The Main Function"""
+def main():
+    """Calculates diffs between two databases and saves them to a file."""
     files = []
     for file in os.listdir("./data/db"):
         if file.endswith(".db") and not file.startswith("latest"):
@@ -41,4 +40,5 @@ def diff():
                 json.dump(data, file)
 
 
-diff()
+if __name__ == "__main__":
+    main()

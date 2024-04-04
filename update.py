@@ -88,7 +88,9 @@ class Update:
         self.save(areas, timestamp)
         os.rename("./data/latest.db", f"./data/db/{timestamp}.db")
         if len(errors) > 0:
-            tqdm.write(f"Errors occurred for {len(errors)} areas")
+            tqdm.write(f"Errors occurred for {len(errors)} areas:")
+            for e in errors:
+                tqdm.write(f"{e['properties']['CODICE']}")
 
     def download_features(self):
         """Download features for all regions."""
@@ -108,20 +110,20 @@ class Update:
         return all_features
 
     def run(self):
-        tmp_file = "./data/output.json"
-        out_file = "./data/minified.json"
-        if os.path.exists(out_file):
-            minified = open(out_file, encoding="utf-8")
+        temp_file = "./data/output.json"
+        mini_file = "./data/minified.json"
+        if os.path.exists(mini_file):
+            minified = open(mini_file, encoding="utf-8")
             features = json.loads(minified.read())
             feature_collection = features["features"]
         else:
             features = self.download_features()
             feature_collection = list({feature["properties"]["CODICE"]: feature for feature in features}.values())
             output = {"type": "FeatureCollection", "features": feature_collection}
-            with open(tmp_file, "w+", encoding="utf-8") as file:
+            with open(temp_file, "w+", encoding="utf-8") as file:
                 json.dump(output, file)
-            os.system(f"mapshaper -i {tmp_file} -snap -simplify weighted 12% keep-shapes -o {out_file}")
-            os.remove(tmp_file)
+            os.system(f"mapshaper -i {temp_file} -snap -simplify weighted 12% keep-shapes -o {mini_file}")
+            os.remove(temp_file)
 
         self.insert_features(feature_collection)
         self.db_manager.close()
