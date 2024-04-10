@@ -1,8 +1,8 @@
 name: Check and update Areas
 
 on:
-  #schedule:
-    #- cron: '0 0 * * *'
+  schedule:
+    - cron: '0 0 * * *'
   workflow_dispatch:
 
 jobs:
@@ -15,13 +15,13 @@ jobs:
         
       - name: Install packages
         run: |-
-          pip install pandas requests
+          pip install -r requirements.txt
           sudo apt-get install sqlite3
       
       - name: Update Areas
         id: update_areas
         run: |-
-          OPENSSL_CONF=openssl.cnf python3 ./update.py
+          OPENSSL_CONF=config/openssl.cnf python3 ./update.py
 
       - name: Calculate Diffs
         id: calculate_diffs
