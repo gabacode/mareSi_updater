@@ -37,3 +37,6 @@ CODICI_ISTAT = {
     "Sardegna": "092009",
 }
 MAX_WORKERS = 15
+LATEST_DB = "./data/latest.db"
+MINIFIED_FILEPATH = "./data/minified.json"
+AB_LAYER = "rest/layer/AB"

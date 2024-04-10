@@ -1,6 +1,8 @@
 import json
 import logging
 import os
+import subprocess
+import tempfile
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 
@@ -9,7 +11,7 @@ import urllib3
 from rich import print
 from tqdm import tqdm
 
-from config import HEADERS, PORTALE_URL, CODICI_ISTAT, MAX_WORKERS
+from config import HEADERS, PORTALE_URL, CODICI_ISTAT, MAX_WORKERS, MINIFIED_FILEPATH, LATEST_DB, AB_LAYER
 from utils import Utilities, DatabaseManager
 
 urllib3.disable_warnings()
@@ -29,9 +31,9 @@ class Update:
         return session
 
     def get_features(self, codice_istat):
-        """Download data for a given ISTAT code."""
+        """Download Feaatures for a given ISTAT code."""
         try:
-            response = self.session.get(f"{PORTALE_URL}/rest/layer/AB/{codice_istat}", verify=False)
+            response = self.session.get(f"{PORTALE_URL}/{AB_LAYER}/{codice_istat}", verify=False)
             response.raise_for_status()
             data = response.json()
             if "features" in data:
@@ -44,10 +46,10 @@ class Update:
             return []
 
     def process_area(self, feature):
-        """Process and insert area data into the database."""
-        codice_area = feature["properties"]["CODICE"]
-        response = self.session.get(f"{PORTALE_URL}/datiArea.do?codiceArea={str(codice_area)}&tipoArea=undefined&isFuoriNorma=undefined",
-                                    verify=False, timeout=(20, 60))
+        endpoint = "datiArea.do?codiceArea"
+        codice_area = str(feature["properties"]["CODICE"])
+        params = "tipoArea=undefined&isFuoriNorma=undefined"
+        response = self.session.get(f"{PORTALE_URL}/{endpoint}={codice_area}&{params}", verify=False, timeout=(20, 60))
         if response.status_code == 200:
             data = response.json()
             area = data.get("areaBalneazioneBean")
@@ -59,9 +61,54 @@ class Update:
 
     @staticmethod
     def save(areas, timestamp):
-        """Save areas to a JSON file."""
+        """Save areas and new database."""
         with open(f"./data/json/{timestamp}.json", "w+", encoding="utf-8") as file:
             json.dump(areas, file)
+        os.rename(LATEST_DB, f"./data/db/{timestamp}.db")
+
+    def download_features(self):
+        """Download features for all regions."""
+        all_features = []
+        with tqdm(CODICI_ISTAT.values(), desc=f"Downloading {len(CODICI_ISTAT.values())} Regions", unit="Regione") as pbar:
+            with ThreadPoolExecutor(max_workers=10) as executor:
+                future_to_istat = {executor.submit(self.get_features, istat): istat for istat in CODICI_ISTAT.values()}
+                for future in as_completed(future_to_istat):
+                    codice_istat = future_to_istat[future]
+                    try:
+                        features = future.result()
+                        all_features.extend(features)
+                    except Exception as e:
+                        tqdm.write(f"Error downloading features for {codice_istat}: {e}")
+                    finally:
+                        pbar.update(1)
+        return all_features
+
+    @staticmethod
+    def load_minified():
+        assert os.path.exists(MINIFIED_FILEPATH), "Minified file does not exist."
+        with open(MINIFIED_FILEPATH, "r", encoding="utf-8") as minified_file:
+            features = json.load(minified_file)
+            return features["features"]
+
+    def get_feature_collection(self):
+        features = self.download_features()
+        feature_collection = list({feature["properties"]["CODICE"]: feature for feature in reversed(features)}.values())
+        for feature in feature_collection:
+            feature.pop("id", None)
+            feature["properties"].pop("TYPE", None)
+        output = {"type": "FeatureCollection", "features": feature_collection}
+        with tempfile.NamedTemporaryFile(mode="w+", encoding="utf-8", delete=False) as temp_file:
+            json.dump(output, temp_file)
+            temp_file_path = temp_file.name
+        try:
+            subprocess.run(["mapshaper", "-i", temp_file_path, "-snap", "-simplify", "weighted 12% keep-shapes", "-o", MINIFIED_FILEPATH], check=True)
+        except subprocess.CalledProcessError as e:
+            print(f"An error occurred while processing the file: {e}")
+            raise
+        finally:
+            if os.path.exists(temp_file_path):
+                os.remove(temp_file_path)
+        return self.load_minified()
 
     def insert_features(self, features):
         """Insert features into the database."""
@@ -86,52 +133,27 @@ class Update:
         self.db_manager.update_version(timestamp)
         self.db_manager.commit()
         self.save(areas, timestamp)
-        os.rename("./data/latest.db", f"./data/db/{timestamp}.db")
         if len(errors) > 0:
             tqdm.write(f"Errors occurred for {len(errors)} areas:")
             for e in errors:
                 tqdm.write(f"{e['properties']['CODICE']}")
 
-    def download_features(self):
-        """Download features for all regions."""
-        all_features = []
-        with tqdm(CODICI_ISTAT.values(), desc=f"Downloading {len(CODICI_ISTAT.values())} Regions", unit="Regione") as pbar:
-            with ThreadPoolExecutor(max_workers=10) as executor:
-                future_to_istat = {executor.submit(self.get_features, istat): istat for istat in CODICI_ISTAT.values()}
-                for future in as_completed(future_to_istat):
-                    codice_istat = future_to_istat[future]
-                    try:
-                        features = future.result()
-                        all_features.extend(features)
-                    except Exception as e:
-                        tqdm.write(f"Error downloading features for {codice_istat}: {e}")
-                    finally:
-                        pbar.update(1)
-        return all_features
-
     def run(self):
-        temp_file = "./data/output.json"
-        mini_file = "./data/minified.json"
-        if os.path.exists(mini_file):
-            minified = open(mini_file, encoding="utf-8")
-            features = json.loads(minified.read())
-            feature_collection = features["features"]
+        if self.has_minified():
+            feature_collection = self.load_minified()
         else:
-            features = self.download_features()
-            feature_collection = list({feature["properties"]["CODICE"]: feature for feature in features}.values())
-            output = {"type": "FeatureCollection", "features": feature_collection}
-            with open(temp_file, "w+", encoding="utf-8") as file:
-                json.dump(output, file)
-            os.system(f"mapshaper -i {temp_file} -snap -simplify weighted 12% keep-shapes -o {mini_file}")
-            os.remove(temp_file)
-
+            feature_collection = self.get_feature_collection()
         self.insert_features(feature_collection)
         self.db_manager.close()
+
+    @staticmethod
+    def has_minified():
+        return os.path.exists(MINIFIED_FILEPATH)
 
 
 if __name__ == "__main__":
     try:
-        Update("./data/latest.db").run()
+        Update(LATEST_DB).run()
     except Exception as error:
         logging.exception(f"An error occurred: {error}")
     finally:
