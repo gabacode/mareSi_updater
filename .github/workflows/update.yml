@@ -2,22 +2,21 @@ name: Check and update Areas
 
 on:
   schedule:
-    - cron: '0 0 * * *'
+    - cron: "0 0 * * *"
   workflow_dispatch:
 
 jobs:
   check_new:
     runs-on: ubuntu-22.04
     steps:
-      
       - name: Git checkout
         uses: actions/checkout@v2
-        
+
       - name: Install packages
         run: |-
           pip install -r requirements.txt
-          sudo apt-get install sqlite3
-      
+          sudo apt-get install sqlite3 sqlite3-tools
+
       - name: Update Areas
         id: update_areas
         run: |-
@@ -27,7 +26,7 @@ jobs:
         id: calculate_diffs
         run: |-
           python3 ./diff.py
-        
+
       - name: Update Repository
         run: |-
           git config user.name "autoupdate"
