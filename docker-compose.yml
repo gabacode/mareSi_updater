@@ -1,0 +1,9 @@
+services:
+  update:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    volumes:
+      - .:/app
+    # command: OPENSSL_CONF=config/openssl.cnf python3 ./update.py
+    command: tail -f /dev/null
