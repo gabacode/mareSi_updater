@@ -6,12 +6,12 @@ import tempfile
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 
-import requests
+import httpx
 import urllib3
 from rich import print
 from tqdm import tqdm
 
-from config import HEADERS, PORTALE_URL, CODICI_ISTAT, MAX_WORKERS, MINIFIED_FILEPATH, LATEST_DB, AB_LAYER
+from config import HEADERS, PORTALE_URL, CODICI_ISTAT, MAX_WORKERS, MINIFIED_FILEPATH, LATEST_DB, AB_LAYER, CERT_PATH
 from utils import Utilities, DatabaseManager
 
 urllib3.disable_warnings()
@@ -26,14 +26,16 @@ class Update:
 
     @staticmethod
     def get_session():
-        session = requests.Session()
-        session.headers.update(HEADERS)
-        return session
+        if os.path.exists(CERT_PATH):
+            logging.info(f"Using certificate at {CERT_PATH}")
+            return httpx.Client(verify=CERT_PATH, headers=HEADERS, timeout=60.0)
+        logging.warning("Certificate not found. Using system certificates.")
+        raise FileNotFoundError(f"Certificate not found at {CERT_PATH}. Please provide a valid certificate.")
 
     def get_features(self, codice_istat):
         """Download Feaatures for a given ISTAT code."""
         try:
-            response = self.session.get(f"{PORTALE_URL}/{AB_LAYER}/{codice_istat}", verify=False)
+            response = self.session.get(f"{PORTALE_URL}/{AB_LAYER}/{codice_istat}")
             response.raise_for_status()
             data = response.json()
             if "features" in data:
@@ -41,7 +43,7 @@ class Update:
             else:
                 tqdm.write(f"No features found for {codice_istat}")
                 return []
-        except requests.RequestException as e:
+        except httpx.RequestError as e:
             print(f"{codice_istat}: {e}")
             return []
 
@@ -49,7 +51,7 @@ class Update:
         endpoint = "datiArea.do?codiceArea"
         codice_area = str(feature["properties"]["CODICE"])
         params = "tipoArea=undefined&isFuoriNorma=undefined"
-        response = self.session.get(f"{PORTALE_URL}/{endpoint}={codice_area}&{params}", verify=False, timeout=(20, 60))
+        response = self.session.get(f"{PORTALE_URL}/{endpoint}={codice_area}&{params}", timeout=60.0)
         if response.status_code == 200:
             data = response.json()
             area = data.get("areaBalneazioneBean")
@@ -69,7 +71,8 @@ class Update:
     def download_features(self):
         """Download features for all regions."""
         all_features = []
-        with tqdm(CODICI_ISTAT.values(), desc=f"Downloading {len(CODICI_ISTAT.values())} Regions", unit="Regione") as pbar:
+        with tqdm(CODICI_ISTAT.values(), desc=f"Downloading {len(CODICI_ISTAT.values())} Regions",
+                  unit="Regione") as pbar:
             with ThreadPoolExecutor(max_workers=10) as executor:
                 future_to_istat = {executor.submit(self.get_features, istat): istat for istat in CODICI_ISTAT.values()}
                 for future in as_completed(future_to_istat):
@@ -101,7 +104,8 @@ class Update:
             json.dump(output, temp_file)
             temp_file_path = temp_file.name
         try:
-            subprocess.run(["mapshaper", "-i", temp_file_path, "-snap", "-simplify", "weighted 12% keep-shapes", "-o", MINIFIED_FILEPATH], check=True)
+            subprocess.run(["mapshaper", "-i", temp_file_path, "-snap", "-simplify", "weighted 12% keep-shapes", "-o",
+                            MINIFIED_FILEPATH], check=True)
         except subprocess.CalledProcessError as e:
             print(f"An error occurred while processing the file: {e}")
             raise

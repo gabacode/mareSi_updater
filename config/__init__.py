@@ -40,3 +40,4 @@ MAX_WORKERS = 15
 LATEST_DB = "./data/latest.db"
 MINIFIED_FILEPATH = "./data/minified.json"
 AB_LAYER = "rest/layer/AB"
+CERT_PATH = "./config/certs/chain.pem"
