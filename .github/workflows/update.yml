@@ -8,29 +8,22 @@ on:
 jobs:
   check_new:
     runs-on: ubuntu-22.04
+
     steps:
       - name: Git checkout
         uses: actions/checkout@v2
 
-      - name: Install packages
-        run: |-
-          pip install -r requirements.txt
-          sudo rm -f /etc/apt/apt-mirrors.txt
-          sudo apt-get update
-          sudo apt-get install -y sqlite3 sqlite3-tools
+      - name: Build Docker image
+        run: docker build -t area-updater .
 
       - name: Update Areas
-        id: update_areas
-        run: |-
-          OPENSSL_CONF=config/openssl.cnf python3 ./update.py
+        run: docker run -v ${{ github.workspace }}:/app area-updater OPENSSL_CONF=config/openssl.cnf python3 update.py
 
       - name: Calculate Diffs
-        id: calculate_diffs
-        run: |-
-          python3 ./diff.py
+        run: docker run -v ${{ github.workspace }}:/app area-updater python3 diff.py
 
       - name: Update Repository
-        run: |-
+        run: |
           git config user.name "autoupdate"
           git config user.email "actions@users.noreply.github.com"
           git add -A
