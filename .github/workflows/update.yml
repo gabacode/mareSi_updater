@@ -15,7 +15,9 @@ jobs:
       - name: Install packages
         run: |-
           pip install -r requirements.txt
-          sudo apt-get install sqlite3 sqlite3-tools
+          sudo rm -f /etc/apt/apt-mirrors.txt
+          sudo apt-get update
+          sudo apt-get install -y sqlite3 sqlite3-tools
 
       - name: Update Areas
         id: update_areas
