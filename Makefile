@@ -25,3 +25,9 @@ install:
 	@echo "Activating virtual environment and installing dependencies..."
 	@bash -c "source venv/bin/activate && pip install -r requirements.txt"
 	@echo "Done."
+
+.PHONY: auto
+auto: venv_check
+	@echo "Running updater with Docker support..."
+	docker run --rm -v "$$PWD":/app -e OPENSSL_CONF=config/openssl.cnf -w /app area-updater python3 update.py
+	docker run --rm -v "$$PWD":/app -w /app area-updater python3 diff.py
