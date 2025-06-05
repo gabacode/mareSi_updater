@@ -11,16 +11,29 @@ jobs:
 
     steps:
       - name: Git checkout
-        uses: actions/checkout@v2
+        uses: actions/checkout@v4
 
-      - name: Build Docker image
-        run: docker build -t area-updater .
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+
+      - name: Install system and Python packages
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y sqlite3 sqlite3-tools ca-certificates
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
 
       - name: Update Areas
-        run: docker run -v ${{ github.workspace }}:/app area-updater OPENSSL_CONF=config/openssl.cnf python3 update.py
+        id: update_areas
+        run: |
+          OPENSSL_CONF=config/openssl.cnf python3 ./update.py
 
       - name: Calculate Diffs
-        run: docker run -v ${{ github.workspace }}:/app area-updater python3 diff.py
+        id: calculate_diffs
+        run: |
+          python3 ./diff.py
 
       - name: Update Repository
         run: |
