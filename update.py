@@ -66,6 +66,8 @@ class Update:
         """Save areas and new database."""
         with open(f"./data/json/{timestamp}.json", "w+", encoding="utf-8") as file:
             json.dump(areas, file)
+        with open("./data/json/latest.json", "w+", encoding="utf-8") as file:
+            json.dump(areas, file)
         os.rename(LATEST_DB, f"./data/db/{timestamp}.db")
 
     def download_features(self):
