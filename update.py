@@ -2,6 +2,7 @@ import json
 import logging
 import os
 import subprocess
+import sys
 import tempfile
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
@@ -135,6 +136,14 @@ class Update:
                     tqdm.write(f"Feature generated an exception: {feature}, {exc}")
                 finally:
                     pbar.update(1)
+
+        if len(areas) == 0:
+            logging.error("Nessun'area disponibile - il Portale Acque potrebbe essere offline. Aggiornamento annullato!")
+            self.db_manager.close()
+            if os.path.exists(LATEST_DB):
+                os.remove(LATEST_DB)
+            sys.exit(1)
+
         timestamp = datetime.now().strftime("%Y-%m-%dT%H:%M:%S")
         self.db_manager.update_version(timestamp)
         self.db_manager.commit()
