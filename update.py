@@ -1,3 +1,4 @@
+import argparse
 import json
 import logging
 import os
@@ -17,6 +18,16 @@ from utils import Utilities, DatabaseManager
 
 urllib3.disable_warnings()
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logging.getLogger("httpx").setLevel(logging.WARNING)
+
+
+class RequestError(Exception):
+
+    def __init__(self, url, status_code, codice_area):
+        self.url = url
+        self.status_code = status_code
+        self.codice_area = codice_area
+        super().__init__(f"HTTP {status_code} for area {codice_area}: {url}")
 
 
 class Update:
@@ -24,6 +35,10 @@ class Update:
         self.db_manager = DatabaseManager(database)
         self.session = self.get_session()
         self.utils = Utilities()
+
+    @staticmethod
+    def get_area_url(codice_area):
+        return f"{PORTALE_URL}/datiArea?codiceArea={codice_area}&tipoArea=AB&isFuoriNorma=undefined"
 
     @staticmethod
     def get_session():
@@ -49,10 +64,10 @@ class Update:
             return []
 
     def process_area(self, feature):
-        endpoint = "datiArea.do?codiceArea"
         codice_area = str(feature["properties"]["CODICE"])
-        params = "tipoArea=undefined&isFuoriNorma=undefined"
-        response = self.session.get(f"{PORTALE_URL}/{endpoint}={codice_area}&{params}", timeout=60.0)
+        url = self.get_area_url(codice_area)
+
+        response = self.session.get(url, timeout=60.0)
         if response.status_code == 200:
             data = response.json()
             area = data.get("areaBalneazioneBean")
@@ -60,7 +75,7 @@ class Update:
                 return None
             coordinates = feature["geometry"]["coordinates"]
             return self.utils.convert_area(area, coordinates, data)
-        return None
+        raise RequestError(url, response.status_code, codice_area)
 
     @staticmethod
     def save(areas, timestamp):
@@ -107,8 +122,9 @@ class Update:
             json.dump(output, temp_file)
             temp_file_path = temp_file.name
         try:
-            subprocess.run(["mapshaper", "-i", temp_file_path, "-snap", "-simplify", "weighted 12% keep-shapes", "-o",
-                            MINIFIED_FILEPATH], check=True)
+            subprocess.run(
+                ["mapshaper", "-i", temp_file_path, "-snap", "-simplify", "weighted", "12%", "keep-shapes", "-o",
+                 MINIFIED_FILEPATH], check=True)
         except subprocess.CalledProcessError as e:
             print(f"An error occurred while processing the file: {e}")
             raise
@@ -117,8 +133,10 @@ class Update:
                 os.remove(temp_file_path)
         return self.load_minified()
 
-    def insert_features(self, features):
+    def insert_features(self, features, limit=None):
         """Insert features into the database."""
+        if limit:
+            features = features[:limit]
         areas, errors = [], []
         self.db_manager.begin_transaction()
         pbar = tqdm(total=len(features), desc=f"Processing {len(features)} Areas", unit="area")
@@ -131,14 +149,19 @@ class Update:
                     if area:
                         areas.append(area)
                         self.db_manager.insert_area(area)
+                except RequestError as exc:
+                    errors.append({"status": exc.status_code, "url": exc.url})
+                    tqdm.write(f"HTTP {exc.status_code}: {exc.url}")
                 except Exception as exc:
-                    errors.append(feature)
-                    tqdm.write(f"Feature generated an exception: {feature}, {exc}")
+                    url = self.get_area_url(feature["properties"]["CODICE"])
+                    errors.append({"url": url, "error": str(exc)})
+                    tqdm.write(f"Error: {url} - {exc}")
                 finally:
                     pbar.update(1)
 
         if len(areas) == 0:
-            logging.error("Nessun'area disponibile - il Portale Acque potrebbe essere offline. Aggiornamento annullato!")
+            logging.error(
+                "Nessun'area disponibile - il Portale Acque potrebbe essere offline. Aggiornamento annullato!")
             self.db_manager.close()
             if os.path.exists(LATEST_DB):
                 os.remove(LATEST_DB)
@@ -149,16 +172,21 @@ class Update:
         self.db_manager.commit()
         self.save(areas, timestamp)
         if len(errors) > 0:
-            tqdm.write(f"Errors occurred for {len(errors)} areas:")
+            tqdm.write(f"\n{'=' * 60}")
+            tqdm.write(f"Failed requests: {len(errors)}")
+            tqdm.write(f"{'=' * 60}")
             for e in errors:
-                tqdm.write(f"{e['properties']['CODICE']}")
+                if "status" in e:
+                    tqdm.write(f"  HTTP {e['status']}: {e['url']}")
+                else:
+                    tqdm.write(f"  {e['url']}: {e.get('error', 'Unknown error')}")
 
-    def run(self):
+    def run(self, limit=None):
         if self.has_minified():
             feature_collection = self.load_minified()
         else:
             feature_collection = self.get_feature_collection()
-        self.insert_features(feature_collection)
+        self.insert_features(feature_collection, limit=limit)
         self.db_manager.close()
 
     @staticmethod
@@ -167,8 +195,18 @@ class Update:
 
 
 if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="Update areas")
+    parser.add_argument("--minify", action="store_true")
+    parser.add_argument("--limit", type=int, default=None)
+    args = parser.parse_args()
+
     try:
-        Update(LATEST_DB).run()
+        updater = Update(LATEST_DB)
+        if args.minify:
+            updater.get_feature_collection()
+            logging.info(f"Minified file saved to {MINIFIED_FILEPATH}")
+        else:
+            updater.run(limit=args.limit)
     except Exception as error:
         logging.exception(f"An error occurred: {error}")
     finally:

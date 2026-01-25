@@ -1,0 +1,7 @@
+{
+  "name": "maresi_updater",
+  "version": "1.0.0",
+  "dependencies": {
+    "mapshaper": "^0.6.113"
+  }
+}
